@@ -50,7 +50,7 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None):
     tl = (
         line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
     )  # line/font thickness
-    color = color or [random.randint(0, 255) for _ in range(3)]
+    color = (255, 0, 0) if "blue" in label else (0, 0, 255)
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
     cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
     if label:
@@ -356,16 +356,7 @@ if __name__ == "__main__":
 
     # load coco labels
 
-    categories = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-            "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-            "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-            "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-            "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-            "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-            "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-            "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-            "hair drier", "toothbrush"]
-
+    categories = ["blue", "red"]
     if os.path.exists('output/'):
         shutil.rmtree('output/')
     os.makedirs('output/')
