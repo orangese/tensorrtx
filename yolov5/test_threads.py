@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
+import ctypes
 from threading import Thread
 from timeit import default_timer as timer
 
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+
+from yolov5_trt_RS import YoLov5TRT
 
 
 class CVThread(ABC):
@@ -53,7 +56,7 @@ class RSCapture(CVThread):
         self.align = rs.align(rs.stream.color)
         self.stream.start(rs_cfg)
 
-        self._setup(f"RS::{uid}", args)
+        self._setup(f"RS-{uid}", args)
 
     def _next(self):
         frames = self.stream.wait_for_frames()
@@ -70,37 +73,42 @@ class RSCapture(CVThread):
         return self.frame, self.depth, self.intrin
 
 
-class Blur(CVThread):
+class YOLOThread(CVThread):
 
-    def __init__(self, cap, *args):
+    def __init__(self, yolo, cap, *args):
+        self.yolo = yolo
         self.cap = cap
-        self._setup(f"CV::{cap.uid}", args)
+        self._setup(f"YOLO-{cap.uid}", args)
 
     def _next(self):
         frame, _, _, = self.cap.read()
-        self.frame = cv2.blur(frame, (15, 15))
+        self.frame = self.yolo.infer(frame[..., ::-1])[0]
 
     def _cleanup(self):
         self.cap._cleanup()
+        self.yolo.destroy()
 
     def read(self):
         return self.frame
 
 
 if __name__ == "__main__":
-    cap = RSCapture(0)
-    blur = Blur(cap)
-    fpses = []
+    ctypes.CDLL("build/libmyplugins.so")
 
+    yolo = YoLov5TRT("build/yolov5s.engine")
+    cap = RSCapture(0)
+    yolo_thread = YOLOThread(yolo, cap)
+
+    fpses = []
     while True:
         t = timer()
-        frame = blur.read()
+        frame = yolo_thread.read()
 
         fps = 1 / (timer() - t)
         fpses.append(fps)
-        print("FPS:", fps)
+        # print("FPS:", fps)
 
-        cv2.imshow("test", frame[..., ::-1])
+        cv2.imshow("test", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             cap.stop()
             break
