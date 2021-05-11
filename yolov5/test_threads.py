@@ -43,6 +43,22 @@ class CVThread(ABC):
         """Returns next frames"""
 
 
+class CV2Capture(CVThread):
+
+    def __init__(self, src, *args):
+        self.cap = cv2.VideoCapture(src)
+        self._setup(f"VC-{src}", args)
+
+    def _next(self):
+        self.retval, self.frame = self.cap.read()
+
+    def _cleanup(self):
+        pass
+
+    def read(self):
+        return self.retval, self.frame
+
+
 class RSCapture(CVThread):
 
     def __init__(self, uid, *args):
@@ -81,7 +97,10 @@ class YOLOThread(CVThread):
         self._setup(f"YOLO-{cap.uid}", args)
 
     def _next(self):
-        frame, _, _, = self.cap.read()
+        if isinstance(self.cap, RSCapture):
+            frame, _, _, = self.cap.read()
+        elif isinstance(self.cap, CV2Capture):
+            _, frame = self.cap.read()
         self.frame = self.yolo.infer(frame[..., ::-1])[0]
 
     def _cleanup(self):
@@ -97,6 +116,7 @@ if __name__ == "__main__":
 
     yolo = YoLov5TRT("build/yolov5s.engine")
     cap = RSCapture(0)
+#     cap = CV2Capture(0)
     yolo_thread = YOLOThread(yolo, cap)
 
     fpses = []
