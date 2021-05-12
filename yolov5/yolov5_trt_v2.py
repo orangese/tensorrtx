@@ -40,7 +40,7 @@ class YOLOTrtV5(object):
         bindings = []
 
         for binding in engine:
-            print('binding:', binding, engine.get_binding_shape(binding))
+            print(f"[INFO] {binding} :: {engine.get_binding_shape(binding)}")
             size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
             dtype = trt.nptype(engine.get_binding_dtype(binding))
             # Allocate host and device buffers
@@ -81,7 +81,7 @@ class YOLOTrtV5(object):
         cuda_outputs = self.cuda_outputs
         bindings = self.bindings
 
-        input_image, image_raw, origin_h, origin_w = self.preprocess_image(img.copy())
+        input_image, origin_h, origin_w = self.preprocess_image(img)
         input_image = np.ascontiguousarray(input_image)
 
         np.copyto(host_inputs[0], input_image.ravel())
@@ -92,13 +92,15 @@ class YOLOTrtV5(object):
         cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
         stream.synchronize()
 
-        self.destroy()
-        return self.post_process(host_outputs[0, :6001], origin_h, origin_w)
+        self.ctx.pop()
+        return self.post_process(host_outputs[0][:6001], origin_h, origin_w)
 
-    def draw(self, img, boxes, scores, cls_id):
+    def draw(self, img, boxes, scores, cls_id, cp=True):
+        if cp:
+            img = img.copy()
         tl = int(round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1)
         for i, box in enumerate(boxes):
-            label = f"{CATS[int(cls_id[i])]}:{round(scores[i], 2)}"
+            label = f"{CATS[int(cls_id[i])]}:{round(scores[i].item(), 2)}"
             color = (255, 0, 0) if "blue" in label else (0, 0, 255)
 
             c1, c2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
@@ -110,10 +112,8 @@ class YOLOTrtV5(object):
             cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
             cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3,
                         (225, 255, 255), thickness=tf, lineType=cv2.LINE_AA)
+        return img
 
-    def destroy(self):
-        self.ctx.pop()
-        
     def preprocess_image(self, raw_bgr_image):
         """
         description: Convert BGR image to RGB,
@@ -160,7 +160,7 @@ class YOLOTrtV5(object):
         image = np.expand_dims(image, axis=0)
         # Convert the image to row-major order, also known as "C order":
         image = np.ascontiguousarray(image)
-        return image, image_raw, h, w
+        return image, h, w
 
     def xywh2xyxy(self, origin_h, origin_w, x):
         """
