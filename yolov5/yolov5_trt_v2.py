@@ -1,13 +1,9 @@
-"""
-An example that uses TensorRT's Python api to make inferences.
-"""
-import ctypes
 import os
 import shutil
-import random
 import sys
 import threading
 import time
+
 import cv2
 import numpy as np
 import pycuda.autoinit
@@ -18,59 +14,10 @@ import torchvision
 
 CONF_THRESH = 0.5
 IOU_THRESHOLD = 0.4
+CATS = ("blue", "red")
 
 
-def get_img_path_batches(batch_size, img_dir):
-    ret = []
-    batch = []
-    for root, dirs, files in os.walk(img_dir):
-        for name in files:
-            if len(batch) == batch_size:
-                ret.append(batch)
-                batch = []
-            batch.append(os.path.join(root, name))
-    if len(batch) > 0:
-        ret.append(batch)
-    return ret
-
-def plot_one_box(x, img, color=None, label=None, line_thickness=None):
-    """
-    description: Plots one bounding box on image img,
-                 this function comes from YoLov5 project.
-    param: 
-        x:      a box likes [x1,y1,x2,y2]
-        img:    a opencv image object
-        color:  color to draw rectangle, such as (0,255,0)
-        label:  str
-        line_thickness: int
-    return:
-        no return
-
-    """
-    tl = (
-        line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1
-    )  # line/font thickness
-    color = (255, 0, 0) if "blue" in label else (0, 0, 255)
-    c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-    cv2.rectangle(img, c1, c2, color, thickness=int(tl), lineType=cv2.LINE_AA)
-    if label:
-        tf = max(tl - 1, 1)  # font thickness
-        t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-        c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-        cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
-        cv2.putText(
-            img,
-            label,
-            (c1[0], c1[1] - 2),
-            0,
-            tl / 3,
-            [225, 255, 255],
-            thickness=tf,
-            lineType=cv2.LINE_AA,
-        )
-
-
-class YoLov5TRT(object):
+class YOLOTrtV5(object):
     """
     description: A YOLOv5 class that warps TensorRT ops, preprocess and postprocess ops.
     """
@@ -79,8 +26,7 @@ class YoLov5TRT(object):
         # Create a Context on this device,
         self.ctx = cuda.Device(0).make_context()
         stream = cuda.Stream()
-        TRT_LOGGER = trt.Logger(trt.Logger.INFO)
-        runtime = trt.Runtime(TRT_LOGGER)
+        runtime = trt.Runtime(trt.Logger(trt.Logger.INFO))
 
         # Deserialize the engine from file
         with open(engine_file_path, "rb") as f:
@@ -94,7 +40,7 @@ class YoLov5TRT(object):
         bindings = []
 
         for binding in engine:
-            print('bingding:', binding, engine.get_binding_shape(binding))
+            print('binding:', binding, engine.get_binding_shape(binding))
             size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
             dtype = trt.nptype(engine.get_binding_dtype(binding))
             # Allocate host and device buffers
@@ -123,83 +69,51 @@ class YoLov5TRT(object):
         self.bindings = bindings
         self.batch_size = engine.max_batch_size
 
-    def infer(self, img, categories=("blue", "red")):
+    def infer(self, img):
         threading.Thread.__init__(self)
-        # Make self the active context, pushing it on top of the context stack.
         self.ctx.push()
-        # Restore
+
         stream = self.stream
         context = self.context
-        engine = self.engine
         host_inputs = self.host_inputs
         cuda_inputs = self.cuda_inputs
         host_outputs = self.host_outputs
         cuda_outputs = self.cuda_outputs
         bindings = self.bindings
-        # Do image preprocess
-        batch_image_raw = []
-        batch_origin_h = []
-        batch_origin_w = []
 
         input_image, image_raw, origin_h, origin_w = self.preprocess_image(img.copy())
-        batch_image_raw.append(image_raw)
-        batch_origin_h.append(origin_h)
-        batch_origin_w.append(origin_w)
+        input_image = np.ascontiguousarray(input_image)
 
-        batch_input_image = input_image
-        batch_input_image = np.ascontiguousarray(batch_input_image)
-
-        # Copy input image to host buffer
-        np.copyto(host_inputs[0], batch_input_image.ravel())
-        start = time.time()
-        # Transfer input data  to the GPU.
+        np.copyto(host_inputs[0], input_image.ravel())
         cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
-        # Run inference.
-        context.execute_async(batch_size=self.batch_size, bindings=bindings, stream_handle=stream.handle)
-        # Transfer predictions back from the GPU.
+        context.execute_async(batch_size=self.batch_size,
+                              bindings=bindings,
+                              stream_handle=stream.handle)
         cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
-        # Synchronize the stream
         stream.synchronize()
-        end = time.time()
-        # Remove any context from the top of the context stack, deactivating it.
-        self.ctx.pop()
-        # Here we use the first row of output in that batch_size = 1
-        output = host_outputs[0]
-        # Do postprocess
-        for i in range(self.batch_size):
-            result_boxes, result_scores, result_classid = self.post_process(
-                output[i * 6001: (i + 1) * 6001], batch_origin_h[i], batch_origin_w[i]
-            )
-            # Draw rectangles and labels on the original image
-            for j in range(len(result_boxes)):
-                box = result_boxes[j]
-                plot_one_box(
-                    box,
-                    batch_image_raw[i],
-                    label="{}:{:.2f}".format(
-                        categories[int(result_classid[j])], result_scores[j]
-                    ),
-                )
-        return batch_image_raw#, end - start
+
+        self.destroy()
+        return self.post_process(host_outputs[0, :6001], origin_h, origin_w)
+
+    def draw(self, img, boxes, scores, cls_id):
+        tl = int(round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1)
+        for i, box in enumerate(boxes):
+            label = f"{CATS[int(cls_id[i])]}:{round(scores[i], 2)}"
+            color = (255, 0, 0) if "blue" in label else (0, 0, 255)
+
+            c1, c2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+            cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+
+            tf = max(tl - 1, 1)  # font thickness
+            t_size = cv2.getTextSize(label, 0, fontScale=tl/3, thickness=tf)[0]
+            c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+            cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
+            cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3,
+                        (225, 255, 255), thickness=tf, lineType=cv2.LINE_AA)
 
     def destroy(self):
-        # Remove any context from the top of the context stack, deactivating it.
         self.ctx.pop()
         
-    def get_raw_image(self, image_path_batch):
-        """
-        description: Read an image from image path
-        """
-        for img_path in image_path_batch:
-            yield cv2.imread(img_path)
-        
-    def get_raw_image_zeros(self, image_path_batch=None):
-        """
-        description: Ready data for warmup
-        """
-        for _ in range(self.batch_size):
-            yield np.zeros([self.input_h, self.input_w, 3], dtype=np.uint8)
-
     def preprocess_image(self, raw_bgr_image):
         """
         description: Convert BGR image to RGB,
@@ -313,70 +227,3 @@ class YoLov5TRT(object):
         result_scores = scores[indices].cpu()
         result_classid = classid[indices].cpu()
         return result_boxes, result_scores, result_classid
-
-
-class inferThread(threading.Thread):
-    def __init__(self, yolov5_wrapper, image_path_batch):
-        threading.Thread.__init__(self)
-        self.yolov5_wrapper = yolov5_wrapper
-        self.image_path_batch = image_path_batch
-
-    def run(self):
-        batch_image_raw, use_time = self.yolov5_wrapper.infer(self.yolov5_wrapper.get_raw_image(self.image_path_batch))
-        for i, img_path in enumerate(self.image_path_batch):
-            parent, filename = os.path.split(img_path)
-            save_name = os.path.join('output', filename)
-            # Save image
-            cv2.imwrite(save_name, batch_image_raw[i])
-        print('input->{}, time->{:.2f}ms, saving into output/'.format(self.image_path_batch, use_time * 1000))
-
-
-class warmUpThread(threading.Thread):
-    def __init__(self, yolov5_wrapper):
-        threading.Thread.__init__(self)
-        self.yolov5_wrapper = yolov5_wrapper
-
-    def run(self):
-        batch_image_raw, use_time = self.yolov5_wrapper.infer(self.yolov5_wrapper.get_raw_image_zeros())
-        print('warm_up->{}, time->{:.2f}ms'.format(batch_image_raw[0].shape, use_time * 1000))
-
-
-
-if __name__ == "__main__":
-    # load custom plugins
-    PLUGIN_LIBRARY = "build/libmyplugins.so"
-    engine_file_path = "build/yolov5s.engine"
-
-    if len(sys.argv) > 1:
-        engine_file_path = sys.argv[1]
-    if len(sys.argv) > 2:
-        PLUGIN_LIBRARY = sys.argv[2]
-
-    ctypes.CDLL(PLUGIN_LIBRARY)
-
-    # load coco labels
-    categories = ["blue", "red"]
-    if os.path.exists('output/'):
-        shutil.rmtree('output/')
-    os.makedirs('output/')
-    # a YoLov5TRT instance
-    yolov5_wrapper = YoLov5TRT(engine_file_path)
-    try:
-        print('batch size is', yolov5_wrapper.batch_size)
-        
-        image_dir = "samples/"
-        image_path_batches = get_img_path_batches(yolov5_wrapper.batch_size, image_dir)
-
-        for i in range(10):
-            # create a new thread to do warm_up
-            thread1 = warmUpThread(yolov5_wrapper)
-            thread1.start()
-            thread1.join()
-        for batch in image_path_batches:
-            # create a new thread to do inference
-            thread1 = inferThread(yolov5_wrapper, batch)
-            thread1.start()
-            thread1.join()
-    finally:
-        # destroy the instance
-        yolov5_wrapper.destroy()

@@ -3,3 +3,5 @@
 */*.wts
 */*.ppm
 *idea*
+__pycache__
+output
