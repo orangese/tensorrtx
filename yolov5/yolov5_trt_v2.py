@@ -1,5 +1,3 @@
-import os
-import shutil
 import sys
 import threading
 import time
@@ -9,8 +7,8 @@ import numpy as np
 import pycuda.autoinit
 import pycuda.driver as cuda
 import tensorrt as trt
-import torch
-import torchvision
+
+import cnms
 
 CONF_THRESH = 0.5
 IOU_THRESHOLD = 0.4
@@ -172,7 +170,7 @@ class YOLOTrtV5(object):
         return:
             y:          A boxes tensor, each row is a box [x1, y1, x2, y2]
         """
-        y = torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
+        y = np.zeros_like(x)
         r_w = self.input_w / origin_w
         r_h = self.input_h / origin_h
         if r_h > r_w:
@@ -206,8 +204,6 @@ class YOLOTrtV5(object):
         num = int(output[0])
         # Reshape to a two dimentional ndarray
         pred = np.reshape(output[1:], (-1, 6))[:num, :]
-        # to a torch Tensor
-        pred = torch.Tensor(pred).cuda()
         # Get the boxes
         boxes = pred[:, :4]
         # Get the scores
@@ -222,8 +218,8 @@ class YOLOTrtV5(object):
         # Trandform bbox from [center_x, center_y, w, h] to [x1, y1, x2, y2]
         boxes = self.xywh2xyxy(origin_h, origin_w, boxes)
         # Do nms
-        indices = torchvision.ops.nms(boxes, scores, iou_threshold=IOU_THRESHOLD).cpu()
-        result_boxes = boxes[indices, :].cpu()
-        result_scores = scores[indices].cpu()
-        result_classid = classid[indices].cpu()
+        indices = cnms.nms(boxes, scores, IOU_THRESHOLD)
+        result_boxes = boxes[indices, :]
+        result_scores = scores[indices]
+        result_classid = classid[indices]
         return result_boxes, result_scores, result_classid
