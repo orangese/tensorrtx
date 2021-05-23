@@ -53,6 +53,7 @@ class YOLOTrtV5(object):
                 host_inputs.append(host_mem)
                 cuda_inputs.append(cuda_mem)
             else:
+                self.out_r = np.prod(engine.get_binding_shape(binding))
                 host_outputs.append(host_mem)
                 cuda_outputs.append(cuda_mem)
 
@@ -91,7 +92,8 @@ class YOLOTrtV5(object):
         stream.synchronize()
 
         self.ctx.pop()
-        return self.post_process(host_outputs[0][:6001], origin_h, origin_w)
+        return self.post_process(host_outputs[0][:self.out_r],
+                                 origin_h, origin_w)
 
     def draw(self, img, boxes, scores, cls_id, cp=True):
         if cp:
